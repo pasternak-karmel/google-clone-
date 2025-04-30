@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import type React from "react";
@@ -29,7 +30,7 @@ import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { TableCellNode, TableNode, TableRowNode } from "@lexical/table";
 import {
   $getRoot,
-  $isElementNode,
+  // $isElementNode,
   type EditorState,
   type LexicalEditor,
 } from "lexical";
@@ -68,7 +69,7 @@ export default function DocumentEditor({ documentId }: DocumentEditorProps) {
 
         const document = await response.json();
         setEditorState(document.content || null);
-      } catch (error) {
+      } catch {
         toast.error("Failed to load document");
       } finally {
         setIsLoading(false);
@@ -78,45 +79,32 @@ export default function DocumentEditor({ documentId }: DocumentEditorProps) {
     fetchDocument();
   }, [documentId, router]);
 
-  // Handle remote document changes
   useEffect(() => {
     if (!socket) return;
-
-    console.log("Setting up document-changed listener");
 
     const handleDocumentChanged = (data: {
       userId: string;
       changes: string;
     }) => {
-      console.log("Document changed event received in editor:", data);
-
       try {
-        // Skip if this change was made by the current user
         if (data.userId === userId) {
-          console.log("Ignoring own changes");
           return;
         }
 
-        // Set flag to prevent sending this change back to server
         isRemoteChangeRef.current = true;
 
         const editor = editorRef.current;
         if (!editor) {
-          console.warn("Editor reference not available");
           return;
         }
 
-        // Apply the changes to the editor
         editor.update(() => {
           try {
-            // Parse the incoming changes and update the editor state
             const parsedChanges = JSON.parse(data.changes);
             const root = $getRoot();
 
-            // Clear the current content
             root.clear();
 
-            // Apply the new content
             if (parsedChanges && parsedChanges.root) {
               const newRoot = $parseSerializedNode(parsedChanges);
               root.append(...newRoot.getChildren());
@@ -126,7 +114,6 @@ export default function DocumentEditor({ documentId }: DocumentEditorProps) {
           }
         });
 
-        // Reset the flag after applying changes
         setTimeout(() => {
           isRemoteChangeRef.current = false;
         }, 0);
@@ -138,7 +125,6 @@ export default function DocumentEditor({ documentId }: DocumentEditorProps) {
     socket.on("document-changed", handleDocumentChanged);
 
     return () => {
-      console.log("Removing document-changed listener");
       socket.off("document-changed", handleDocumentChanged);
     };
   }, [socket, userId]);
@@ -173,7 +159,7 @@ export default function DocumentEditor({ documentId }: DocumentEditorProps) {
       LinkNode,
       ImageNode,
     ],
-    editorState: editorState ? editorState : undefined,
+    editorState: editorState || undefined,
   };
 
   const saveContent = debounce(async (content: string) => {
@@ -189,16 +175,14 @@ export default function DocumentEditor({ documentId }: DocumentEditorProps) {
       });
 
       if (!response.ok) throw new Error("Failed to save document");
-    } catch (error) {
+    } catch {
       toast.error("Failed to save changes");
     }
   }, 1000);
 
   const onChange = useCallback(
     (editorState: EditorState) => {
-      // Skip if this change was triggered by a remote update
       if (isRemoteChangeRef.current) {
-        console.log("Skipping onChange handler for remote change");
         return;
       }
 
@@ -206,31 +190,31 @@ export default function DocumentEditor({ documentId }: DocumentEditorProps) {
         try {
           const root = $getRoot();
 
-          // Manually serialize the editor state to avoid toJSON issues
-          const serializedState = {
-            root: {
-              children: root.getChildren().map((node) => {
-                if ($isElementNode(node)) {
-                  return {
-                    children: node
-                      .getChildren()
-                      .map((child) => child.exportJSON()),
-                    direction: node.getDirection(),
-                    format: node.getFormat(),
-                    indent: node.getIndent(),
-                    type: node.getType(),
-                    version: 1,
-                  };
-                }
-                return node.exportJSON();
-              }),
-              direction: root.getDirection(),
-              format: root.getFormat(),
-              indent: root.getIndent(),
-              type: "root",
-              version: 1,
-            },
-          };
+          const serializedState = root.exportJSON();
+          // const serializedState = {
+          //   root: {
+          //     children: root.getChildren().map((node) => {
+          //       if ($isElementNode(node)) {
+          //         return {
+          //           children: node
+          //             .getChildren()
+          //             .map((child) => child.exportJSON()),
+          //           direction: node.getDirection(),
+          //           format: node.getFormat(),
+          //           indent: node.getIndent(),
+          //           type: node.getType(),
+          //           version: 1,
+          //         };
+          //       }
+          //       return node.exportJSON();
+          //     }),
+          //     direction: root.getDirection(),
+          //     format: root.getFormat(),
+          //     indent: root.getIndent(),
+          //     type: "root",
+          //     version: 1,
+          //   },
+          // };
 
           const content = JSON.stringify(serializedState);
 
@@ -238,24 +222,13 @@ export default function DocumentEditor({ documentId }: DocumentEditorProps) {
             clearTimeout(saveTimeoutRef.current);
           }
 
-          // Save to server
           saveTimeoutRef.current = setTimeout(() => {
             saveContent(content);
           }, 1000);
 
-          // Send changes to collaborators if collaborative editing is enabled
           if (collaborativeEditing && socket && isConnected) {
-            console.log("Sending document changes to collaborators");
             sendDocumentChange(documentId, content);
           } else {
-            console.log(
-              "Not sending changes: collaborative editing:",
-              collaborativeEditing,
-              "socket exists:",
-              !!socket,
-              "is connected:",
-              isConnected
-            );
           }
         } catch (error) {
           console.error("Error serializing editor state:", error);
@@ -298,7 +271,6 @@ export default function DocumentEditor({ documentId }: DocumentEditorProps) {
           <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
           <OnChangePlugin onChange={onChange} />
 
-          {/* Store editor reference for remote changes */}
           <EditorRefPlugin editorRef={editorRef} />
         </div>
       </div>
@@ -306,7 +278,6 @@ export default function DocumentEditor({ documentId }: DocumentEditorProps) {
   );
 }
 
-// Custom plugin to store editor reference
 function EditorRefPlugin({
   editorRef,
 }: {
@@ -324,15 +295,14 @@ function EditorRefPlugin({
   return null;
 }
 
-// Helper function to parse serialized nodes
 function $parseSerializedNode(serializedNode: any) {
   const root = $getRoot();
 
   try {
     if (serializedNode && serializedNode.root && serializedNode.root.children) {
       const children = serializedNode.root.children;
+      root.clear();
 
-      // Process each child node
       children.forEach((child: any) => {
         if (child.type === "paragraph") {
           const paragraph = $createParagraphNode();

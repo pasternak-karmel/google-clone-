@@ -1,30 +1,31 @@
 "use server";
-
-import { hash } from "bcrypt";
-import { v4 as uuidv4 } from "uuid";
-
-const users = [
-  {
-    id: "1",
-    name: "Admin",
-    email: "admin@example.com",
-    password: "$2b$10$8r0qPVaJeLAEjHpn0iKBXuIf/L3cjGX3hqJG6nGgVjKh8kTJfTIWO",
-    image: null,
-  },
-];
+import { db } from "@/db";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 
 export async function getUserByEmail(email: string) {
-  return users.find((user) => user.email === email) || null;
+  const results = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1);
+  return results.length > 0 ? results[0] : null;
 }
 
 export async function getUserById(id: string) {
-  return users.find((user) => user.id === id) || null;
+  const results = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, id))
+    .limit(1);
+  return results.length > 0 ? results[0] : null;
 }
 
 export async function createUser(data: {
+  id: string;
   name: string;
   email: string;
-  password: string;
+  image?: string | null;
 }) {
   const existingUser = await getUserByEmail(data.email);
 
@@ -32,22 +33,35 @@ export async function createUser(data: {
     throw new Error("User already exists");
   }
 
-  const hashedPassword = await hash(data.password, 10);
+  const newUser = await db
+    .insert(users)
+    .values({
+      id: data.id,
+      name: data.name,
+      email: data.email,
+      image: data.image || null,
+    })
+    .returning();
 
-  const newUser = {
-    id: uuidv4(),
-    name: data.name,
-    email: data.email,
-    password: hashedPassword,
-    image: null,
-  };
+  return newUser[0];
+}
 
-  users.push(newUser);
+export async function updateUser(
+  id: string,
+  data: Partial<{
+    name: string;
+    email: string;
+    image: string | null;
+  }>
+) {
+  const updatedUser = await db
+    .update(users)
+    .set({
+      ...data,
+      updatedAt: new Date(),
+    })
+    .where(eq(users.id, id))
+    .returning();
 
-  return {
-    id: newUser.id,
-    name: newUser.name,
-    email: newUser.email,
-    image: newUser.image,
-  };
+  return updatedUser[0];
 }

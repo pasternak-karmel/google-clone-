@@ -1,44 +1,116 @@
 "use server";
 
-import { v4 as uuidv4 } from "uuid";
+import { db } from "@/db";
+import {
+  documentCollaborators,
+  documents,
+  documentVersions,
+} from "@/db/schema";
+import { and, eq, inArray } from "drizzle-orm";
 import { getUserById } from "./users";
 
-let documents = [
-  {
-    id: "1",
-    title: "Welcome to DocCollab",
-    content:
-      '{"root":{"children":[{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Welcome to DocCollab!","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1}],"direction":"ltr","format":"","indent":0,"type":"root","version":1}}',
-    userId: "user_2vKB0FGwH274NRljUEhcNGWwCOY",
-    collaborators: [
-      "user_2vKB0FGwH274NRljUEhcNGWwCOY",
-      "user_2vKJBu57AYm4l7ja2rcxO3YYTUW",
-    ],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
-
-let versions = [
-  {
-    id: "1",
-    documentId: "1",
-    content:
-      '{"root":{"children":[{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Welcome to DocCollab!","type":"text","version":1}],"direction":"ltr","format":"","indent":0,"type":"paragraph","version":1}],"direction":"ltr","format":"","indent":0,"type":"root","version":1}}',
-    userId: "user_2vKJBu57AYm4l7ja2rcxO3YYTUW",
-    userName: "Admin",
-    createdAt: new Date().toISOString(),
-  },
-];
-
 export async function getDocumentById(id: string) {
-  return documents.find((doc) => doc.id === id) || null;
+  const results = await db
+    .select()
+    .from(documents)
+    .where(eq(documents.id, Number.parseInt(id)))
+    .limit(1);
+
+  if (results.length === 0) {
+    return null;
+  }
+
+  const document = results[0];
+
+  const collaboratorsResults = await db
+    .select({
+      userId: documentCollaborators.userId,
+    })
+    .from(documentCollaborators)
+    .where(eq(documentCollaborators.documentId, Number.parseInt(id)));
+
+  const collaborators = collaboratorsResults.map((c) => c.userId);
+
+  return {
+    ...document,
+    collaborators,
+  };
 }
 
 export async function getUserDocuments(userId: string) {
-  return documents.filter(
-    (doc) => doc.userId === userId || doc.collaborators.includes(userId)
+  const ownedDocuments = await db
+    .select()
+    .from(documents)
+    .where(eq(documents.userId, userId));
+
+  const collaborationResults = await db
+    .select({
+      documentId: documentCollaborators.documentId,
+    })
+    .from(documentCollaborators)
+    .where(eq(documentCollaborators.userId, userId));
+
+  const collaborationIds = collaborationResults.map((c) => c.documentId);
+
+  let collaboratedDocuments: any[] = [];
+  if (collaborationIds.length > 0) {
+    collaboratedDocuments = await db
+      .select()
+      .from(documents)
+      .where(inArray(documents.id, collaborationIds));
+  }
+
+  const allDocuments = [...ownedDocuments, ...collaboratedDocuments];
+
+  const documentsWithCollaborators = await Promise.all(
+    allDocuments.map(async (doc) => {
+      const collaboratorsResults = await db
+        .select({
+          userId: documentCollaborators.userId,
+        })
+        .from(documentCollaborators)
+        .where(eq(documentCollaborators.documentId, doc.id));
+
+      const collaborators = collaboratorsResults.map((c) => c.userId);
+
+      return {
+        ...doc,
+        collaborators,
+      };
+    })
   );
+
+  return documentsWithCollaborators;
+}
+
+function ensureValidContent(content: string | null): any {
+  if (!content) {
+    return {
+      root: {
+        children: [
+          {
+            children: [],
+            direction: "ltr",
+            format: "",
+            indent: 0,
+            type: "paragraph",
+            version: 1,
+          },
+        ],
+        direction: "ltr",
+        format: "",
+        indent: 0,
+        type: "root",
+        version: 1,
+      },
+    };
+  }
+
+  try {
+    return JSON.parse(content);
+  } catch (e) {
+    return content;
+  }
 }
 
 export async function createDocument(data: {
@@ -47,35 +119,43 @@ export async function createDocument(data: {
   content: string;
   collaborators: string[];
 }) {
-  const id = uuidv4();
-  const now = new Date().toISOString();
+  const validContent = ensureValidContent(data.content);
 
-  const newDocument = {
-    id,
-    title: data.title,
-    content: data.content,
-    userId: data.userId,
-    collaborators: data.collaborators,
-    createdAt: now,
-    updatedAt: now,
-  };
+  const [newDocument] = await db
+    .insert(documents)
+    .values({
+      title: data.title,
+      content: validContent,
+      userId: data.userId,
+    })
+    .returning();
 
-  documents.push(newDocument);
+  if (data.collaborators && data.collaborators.length > 0) {
+    await Promise.all(
+      data.collaborators.map(async (userId) => {
+        await db.insert(documentCollaborators).values({
+          documentId: newDocument.id,
+          userId,
+        });
+      })
+    );
+  }
 
-  // Create initial version
-  const versionId = uuidv4();
   const user = await getUserById(data.userId);
 
-  versions.push({
-    id: versionId,
-    documentId: id,
-    content: data.content,
+  if (!user) {
+    throw new Error("User not found");
+  }
+  await db.insert(documentVersions).values({
+    documentId: newDocument.id,
+    content: validContent,
     userId: data.userId,
-    userName: user?.name || "Unknown",
-    createdAt: now,
   });
 
-  return newDocument;
+  return {
+    ...newDocument,
+    collaborators: data.collaborators || [],
+  };
 }
 
 export async function updateDocument(
@@ -86,77 +166,126 @@ export async function updateDocument(
     collaborators: string[];
   }>
 ) {
-  const index = documents.findIndex((doc) => doc.id === id);
+  const documentId = Number.parseInt(id);
 
-  if (index === -1) {
-    return null;
-  }
-
-  const updatedDocument = {
-    ...documents[index],
-    ...data,
-    updatedAt: new Date().toISOString(),
+  const updateData: any = {
+    updatedAt: new Date(),
   };
 
-  documents[index] = updatedDocument;
+  if (data.title !== undefined) {
+    updateData.title = data.title;
+  }
 
-  // Create a new version if content was updated
+  if (data.content !== undefined) {
+    updateData.content = ensureValidContent(data.content);
+  }
+
+  const [updatedDocument] = await db
+    .update(documents)
+    .set(updateData)
+    .where(eq(documents.id, documentId))
+    .returning();
+
   if (data.content) {
-    const versionId = uuidv4();
-    const user = await getUserById(documents[index].userId);
-
-    versions.push({
-      id: versionId,
-      documentId: id,
-      content: data.content,
-      userId: documents[index].userId,
-      userName: user?.name || "Unknown",
-      createdAt: new Date().toISOString(),
+    await db.insert(documentVersions).values({
+      documentId,
+      content: ensureValidContent(data.content),
+      userId: updatedDocument.userId,
     });
   }
 
-  return updatedDocument;
+  const collaboratorsResults = await db
+    .select({
+      userId: documentCollaborators.userId,
+    })
+    .from(documentCollaborators)
+    .where(eq(documentCollaborators.documentId, documentId));
+
+  const currentCollaborators = collaboratorsResults.map((c) => c.userId);
+
+  return {
+    ...updatedDocument,
+    collaborators: currentCollaborators,
+  };
 }
 
 export async function deleteDocument(id: string) {
-  documents = documents.filter((doc) => doc.id !== id);
-  versions = versions.filter((version) => version.documentId !== id);
+  const documentId = Number.parseInt(id);
+
+  await db.delete(documents).where(eq(documents.id, documentId));
+
   return true;
 }
 
 export async function shareDocument(id: string, userId: string) {
-  const index = documents.findIndex((doc) => doc.id === id);
+  const documentId = Number.parseInt(id);
 
-  if (index === -1) {
-    return null;
+  const existingCollaborator = await db
+    .select()
+    .from(documentCollaborators)
+    .where(
+      and(
+        eq(documentCollaborators.documentId, documentId),
+        eq(documentCollaborators.userId, userId)
+      )
+    )
+    .limit(1);
+
+  if (existingCollaborator.length === 0) {
+    await db.insert(documentCollaborators).values({
+      documentId,
+      userId,
+    });
   }
 
-  const updatedDocument = {
-    ...documents[index],
-    collaborators: [...documents[index].collaborators, userId],
-    updatedAt: new Date().toISOString(),
-  };
-
-  documents[index] = updatedDocument;
-
-  return updatedDocument;
+  return getDocumentById(id);
 }
 
 export async function getDocumentVersions(id: string) {
-  return versions
-    .filter((version) => version.documentId === id)
-    .sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+  const documentId = Number.parseInt(id);
+
+  const versions = await db
+    .select({
+      id: documentVersions.id,
+      documentId: documentVersions.documentId,
+      content: documentVersions.content,
+      userId: documentVersions.userId,
+      createdAt: documentVersions.createdAt,
+    })
+    .from(documentVersions)
+    .where(eq(documentVersions.documentId, documentId))
+    .orderBy(documentVersions.createdAt);
+
+  const versionsWithUserInfo = await Promise.all(
+    versions.map(async (version) => {
+      const user = await getUserById(version.userId);
+      return {
+        ...version,
+        userName: user?.name || "Unknown",
+      };
+    })
+  );
+
+  return versionsWithUserInfo;
 }
 
 export async function revertToVersion(documentId: string, versionId: string) {
-  const version = versions.find((v) => v.id === versionId);
+  const docId = Number.parseInt(documentId);
+  const verId = Number.parseInt(versionId);
 
-  if (!version) {
+  const versionResults = await db
+    .select()
+    .from(documentVersions)
+    .where(eq(documentVersions.id, verId))
+    .limit(1);
+
+  if (versionResults.length === 0) {
     return null;
   }
 
-  return updateDocument(documentId, { content: version.content });
+  const version = versionResults[0];
+
+  return updateDocument(documentId, {
+    content: JSON.stringify(version.content),
+  });
 }

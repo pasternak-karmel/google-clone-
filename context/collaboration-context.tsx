@@ -1,8 +1,10 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useAuth, useUser } from "@clerk/nextjs";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useRef,
@@ -26,6 +28,7 @@ interface CollaborationContextType {
   leaveDocument: () => void;
   sendDocumentChange: (documentId: string, changes: any) => void;
   collaborativeEditing: boolean;
+  toggleCollaborativeEditing: () => void;
 }
 
 const CollaborationContext = createContext<
@@ -44,12 +47,10 @@ export function CollaborationProvider({ children }: { children: ReactNode }) {
     null
   );
 
-  // Use refs to prevent multiple socket initializations
   const socketInitializedRef = useRef(false);
   const currentSocketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
-    // Only initialize socket once
     if (socketInitializedRef.current || currentSocketRef.current) {
       return;
     }
@@ -58,9 +59,6 @@ export function CollaborationProvider({ children }: { children: ReactNode }) {
 
     const initializeSocket = async () => {
       try {
-        console.log("Initializing socket connection...");
-
-        // Create user info object to send with connection
         const userInfo =
           userId && user
             ? {
@@ -76,17 +74,15 @@ export function CollaborationProvider({ children }: { children: ReactNode }) {
                 image: "",
               };
 
-        // Get auth token from Clerk if available
         const token = userId ? await getToken() : "anonymous-token";
 
-        // Initialize Socket.IO connection with auth
-        // Connect to the standalone Socket.IO server
-        const socketInstance = io("http://localhost:3001", {
+        const socketUrl =
+          process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
+        const socketInstance = io(socketUrl, {
           autoConnect: true,
           reconnection: true,
           reconnectionAttempts: 5,
           reconnectionDelay: 1000,
-          // Increase timeout to prevent frequent reconnects
           timeout: 20000,
           transports: ["websocket", "polling"],
           auth: {
@@ -96,43 +92,26 @@ export function CollaborationProvider({ children }: { children: ReactNode }) {
         });
 
         socketInstance.on("connect", () => {
-          console.log(
-            "Connected to WebSocket server with ID:",
-            socketInstance.id
-          );
           setIsConnected(true);
 
-          // Rejoin document if we were in one before reconnecting
           if (currentDocumentId) {
-            console.log(
-              "Rejoining document after reconnect:",
-              currentDocumentId
-            );
             socketInstance.emit("join-document", currentDocumentId);
           }
         });
 
-        socketInstance.on("connect_error", (error) => {
-          console.error("Connection error:", error.message);
-        });
+        socketInstance.on("connect_error", () => {});
 
-        socketInstance.on("disconnect", (reason) => {
-          console.log("Disconnected from WebSocket server:", reason);
+        socketInstance.on("disconnect", () => {
           setIsConnected(false);
-          // Don't clear active users on disconnect to prevent UI flashing
         });
 
-        socketInstance.on("error", (error) => {
-          console.error("WebSocket error:", error);
-        });
+        socketInstance.on("error", () => {});
 
         socketInstance.on("active-users", (users) => {
-          console.log("Active users received:", users);
           setActiveUsers(users);
         });
 
         socketInstance.on("user-joined", (user) => {
-          console.log("User joined:", user);
           setActiveUsers((prev) => {
             if (!prev.some((u) => u.id === user.id)) {
               return [...prev, user];
@@ -142,26 +121,20 @@ export function CollaborationProvider({ children }: { children: ReactNode }) {
         });
 
         socketInstance.on("user-left", (user) => {
-          console.log("User left:", user);
           setActiveUsers((prev) => prev.filter((u) => u.id !== user.id));
         });
 
-        socketInstance.on("document-changed", (data) => {
-          console.log("Document changed event received:", data);
-          // This event will be handled by the document editor component
-        });
+        socketInstance.on("document-changed", () => {});
 
         setSocket(socketInstance);
         currentSocketRef.current = socketInstance;
 
         return () => {
-          console.log("Cleaning up socket connection");
           socketInstance.disconnect();
           currentSocketRef.current = null;
           socketInitializedRef.current = false;
         };
-      } catch (error) {
-        console.error("Failed to initialize socket:", error);
+      } catch {
         socketInitializedRef.current = false;
       }
     };
@@ -170,7 +143,6 @@ export function CollaborationProvider({ children }: { children: ReactNode }) {
 
     return () => {
       if (currentSocketRef.current) {
-        console.log("Disconnecting socket on cleanup");
         currentSocketRef.current.disconnect();
         currentSocketRef.current = null;
         socketInitializedRef.current = false;
@@ -180,22 +152,17 @@ export function CollaborationProvider({ children }: { children: ReactNode }) {
 
   const joinDocument = (documentId: string) => {
     if (socket && isConnected) {
-      // Only join if we're not already in this document
       if (currentDocumentId !== documentId) {
-        console.log("Joining document:", documentId);
         socket.emit("join-document", documentId);
         setCurrentDocumentId(documentId);
       } else {
-        console.log("Already in document:", documentId);
       }
     } else {
-      console.warn("Cannot join document: socket not connected");
     }
   };
 
   const leaveDocument = () => {
     if (socket && isConnected && currentDocumentId) {
-      console.log("Leaving document:", currentDocumentId);
       socket.emit("leave-document");
       setCurrentDocumentId(null);
     }
@@ -203,17 +170,14 @@ export function CollaborationProvider({ children }: { children: ReactNode }) {
 
   const sendDocumentChange = (documentId: string, changes: any) => {
     if (socket && isConnected && collaborativeEditing) {
-      console.log("Sending document change to document:", documentId);
       socket.emit("document-change", { documentId, changes });
     } else {
-      console.warn(
-        "Cannot send document change: socket connected:",
-        isConnected,
-        "collaborative editing:",
-        collaborativeEditing
-      );
     }
   };
+
+  const toggleCollaborativeEditing = useCallback(() => {
+    setCollaborativeEditing((prev) => !prev);
+  }, []);
 
   return (
     <CollaborationContext.Provider
@@ -225,6 +189,7 @@ export function CollaborationProvider({ children }: { children: ReactNode }) {
         leaveDocument,
         sendDocumentChange,
         collaborativeEditing,
+        toggleCollaborativeEditing,
       }}
     >
       {children}

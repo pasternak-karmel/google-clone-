@@ -3,10 +3,9 @@ import { getUserByEmail } from "@/lib/users";
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
-export async function POST(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+type Params = Promise<{ id: string }>;
+
+export async function POST(request: Request, segmentData: { params: Params }) {
   const { userId } = await auth();
   if (!userId) {
     return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
@@ -14,6 +13,8 @@ export async function POST(
       headers: { "Content-Type": "application/json" },
     });
   }
+
+  const params = await segmentData.params;
 
   const document = await getDocumentById(params.id);
 
@@ -24,7 +25,6 @@ export async function POST(
     });
   }
 
-  // Only the owner can share a document
   if (document.userId !== userId) {
     return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,

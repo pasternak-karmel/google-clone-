@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAuth } from "@clerk/nextjs";
 import { FileText, MoreHorizontal, Plus, Trash2, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -26,7 +27,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 interface Document {
-  id: string;
+  id: number;
   title: string;
   updatedAt: string;
   collaborators: string[];
@@ -39,6 +40,7 @@ export default function DocumentList() {
   const [newDocTitle, setNewDocTitle] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const router = useRouter();
+  const { userId } = useAuth();
 
   useEffect(() => {
     fetchDocuments();
@@ -68,16 +70,23 @@ export default function DocumentList() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ title: newDocTitle }),
+        body: JSON.stringify({
+          title: newDocTitle,
+          userId: userId,
+        }),
       });
 
       if (!response.ok) throw new Error("Failed to create document");
 
       const newDoc = await response.json();
+
       setDocuments([newDoc, ...documents]);
       setNewDocTitle("");
       setIsDialogOpen(false);
-      router.push(`/documents/${newDoc.id}`);
+
+      setTimeout(() => {
+        router.push(`/documents/${newDoc.id}`);
+      }, 100);
     } catch (error) {
       toast.error("Failed to create document");
     } finally {
@@ -85,7 +94,7 @@ export default function DocumentList() {
     }
   };
 
-  const deleteDocument = async (id: string) => {
+  const deleteDocument = async (id: number) => {
     try {
       const response = await fetch(`/api/documents/${id}`, {
         method: "DELETE",

@@ -28,7 +28,6 @@ export async function GET(request: Request, segmentData: { params: Params }) {
     });
   }
 
-  // Check if user has access to this document
   if (document.userId !== userId && !document.collaborators.includes(userId)) {
     return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
@@ -59,7 +58,6 @@ export async function PUT(request: Request, segmentData: { params: Params }) {
     });
   }
 
-  // Check if user has access to this document
   if (document.userId !== userId && !document.collaborators.includes(userId)) {
     return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
@@ -97,7 +95,6 @@ export async function DELETE(
     });
   }
 
-  // Only the owner can delete a document
   if (document.userId !== userId) {
     return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,

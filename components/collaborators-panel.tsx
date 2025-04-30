@@ -17,22 +17,15 @@ export default function CollaboratorsPanel({
     useCollaborationContext();
 
   useEffect(() => {
-    // Join the document room when component mounts
-    console.log("CollaboratorsPanel: Joining document:", documentId);
-
-    // Only join if connected
     if (isConnected) {
       joinDocument(documentId);
     }
 
     return () => {
-      // Leave the document room when component unmounts
-      console.log("CollaboratorsPanel: Leaving document:", documentId);
       leaveDocument();
     };
   }, [documentId, joinDocument, leaveDocument, isConnected]);
 
-  // Join document when connection is established
   useEffect(() => {
     if (isConnected) {
       joinDocument(documentId);

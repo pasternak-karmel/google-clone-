@@ -1,6 +1,5 @@
 "use client";
 
-// import { DecoratorNode } from "@lexical/react/LexicalDecoratorNode";
 import { DecoratorNode } from "lexical";
 
 import type {

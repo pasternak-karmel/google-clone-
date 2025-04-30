@@ -6,10 +6,9 @@ import {
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
-export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+type Params = Promise<{ id: string }>;
+
+export async function GET(request: Request, segmentData: { params: Params }) {
   const { userId } = await auth();
 
   if (!userId) {
@@ -18,6 +17,7 @@ export async function GET(
       headers: { "Content-Type": "application/json" },
     });
   }
+  const params = await segmentData.params;
 
   const document = await getDocumentById(params.id);
 
@@ -28,7 +28,6 @@ export async function GET(
     });
   }
 
-  // Check if user has access to this document
   if (document.userId !== userId && !document.collaborators.includes(userId)) {
     return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
@@ -41,10 +40,7 @@ export async function GET(
   return NextResponse.json(versions);
 }
 
-export async function POST(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(request: Request, segmentData: { params: Params }) {
   const { userId } = await auth();
 
   if (!userId) {
@@ -53,6 +49,8 @@ export async function POST(
       headers: { "Content-Type": "application/json" },
     });
   }
+
+  const params = await segmentData.params;
 
   const document = await getDocumentById(params.id);
 
@@ -63,7 +61,6 @@ export async function POST(
     });
   }
 
-  // Check if user has access to this document
   if (document.userId !== userId && !document.collaborators.includes(userId)) {
     return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
